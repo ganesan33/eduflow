@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instructor Dashboard</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/dashboard.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.8);
+        }
+
+        .modal-content {
+            background-color: #fff;
+            margin: 5% auto;
+            padding: 2rem;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 900px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .close-modal {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        /* Thumbnail Styles */
+        #thumbnailPreview img {
+            max-width: 200px;
+            max-height: 150px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            margin-top: 10px;
+        }
+        
+        .file-upload-box label[for="courseThumbnail"] i {
+            color: var(--success);
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-container">
+        <aside class="sidebar">
+            <div class="brand">
+                <i class="fas fa-chalkboard-teacher"></i>
+                <h2>EduFlow</h2>
+            </div>
+            <nav>
+                <a href="#" class="active"><i class="fas fa-home"></i> Dashboard</a>
+                <a href="#my-courses"><i class="fas fa-video"></i> My Courses</a>
+                <a href="/logout" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Logout</a>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <header class="dashboard-header">
+                <h1>Instructor Dashboard</h1>
+                <div class="user-profile">
+                    <span>Welcome, Instructor</span>
+                    <div class="avatar"><i class="fas fa-user"></i></div>
+                </div>
+            </header>
+
+            <section class="create-course-section">
+                <div class="section-header">
+                    <h2><i class="fas fa-plus-circle"></i> Create New Course</h2>
+                </div>
+                <form id="createCourseForm" class="upload-form">
+                    <div class="form-group">
+                        <label>Course Title</label>
+                        <input type="text" id="courseTitle" class="form-control" placeholder="Enter course title" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Course Thumbnail</label>
+                        <div class="file-upload-box">
+                            <input type="file" id="courseThumbnail" accept="image/*" required>
+                            <label for="courseThumbnail">
+                                <i class="fas fa-image"></i>
+                                <span>Choose thumbnail image</span>
+                                <span id="thumbnailName">No file selected</span>
+                            </label>
+                        </div>
+                        <div id="thumbnailPreview"></div>
+                    </div>
+                    
+                    <div id="videoUploadsContainer">
+                        <!-- Videos will be added here dynamically -->
+                    </div>
+                    
+                    <button type="button" class="btn-secondary" id="addVideoBtn">
+                        <i class="fas fa-plus"></i> Add Video
+                    </button>
+                    
+                    <button type="submit" class="upload-btn">
+                        <i class="fas fa-save"></i> Create Course
+                    </button>
+                </form>
+            </section>
+
+            <section class="courses-section" id="my-courses">
+                <div class="section-header">
+                    <h2><i class="fas fa-book-open"></i> My Courses</h2>
+                </div>
+                <div class="courses-grid" id="myCoursesList"></div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Course Videos Modal -->
+    <div id="courseVideosModal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h2 id="modalCourseTitle"></h2>
+            <div id="courseVideosList" class="videos-container"></div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const myCoursesList = document.getElementById('myCoursesList');
+            const createCourseForm = document.getElementById('createCourseForm');
+            const videoUploadsContainer = document.getElementById('videoUploadsContainer');
+            const addVideoBtn = document.getElementById('addVideoBtn');
+
+            // Handle thumbnail selection
+            document.getElementById('courseThumbnail').addEventListener('change', function(e) {
+                const fileName = document.getElementById('thumbnailName');
+                const preview = document.getElementById('thumbnailPreview');
+                
+                if (this.files.length > 0) {
+                    fileName.textContent = this.files[0].name;
+                    
+                    // Create preview
+                    const img = document.createElement('img');
+                    img.src = URL.createObjectURL(this.files[0]);
+                    img.style.maxWidth = '200px';
+                    img.style.maxHeight = '150px';
+                    img.style.borderRadius = '4px';
+                    
+                    preview.innerHTML = '';
+                    preview.appendChild(img);
+                } else {
+                    fileName.textContent = 'No file selected';
+                    preview.innerHTML = '';
+                }
+            });
+
+            // Add video upload field
+            const addVideoField = () => {
+                const videoId = Date.now();
+                
+                const videoField = document.createElement('div');
+                videoField.className = 'video-upload-field';
+                videoField.innerHTML = `
+                    <div class="form-group">
+                        <label>Video Title</label>
+                        <input type="text" class="form-control video-title" placeholder="Enter video title" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Upload Video</label>
+                        <div class="file-upload-box">
+                            <input type="file" id="videoFile_${videoId}" class="video-file" accept="video/*" required>
+                            <label for="videoFile_${videoId}">
+                                <i class="fas fa-file-video"></i>
+                                <span>Choose video file</span>
+                                <span class="file-name">No file selected</span>
+                            </label>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-danger remove-video-btn">
+                        <i class="fas fa-trash"></i> Remove Video
+                    </button>
+                `;
+                
+                videoUploadsContainer.appendChild(videoField);
+                
+                // Handle file selection for this video
+                const fileInput = videoField.querySelector(`#videoFile_${videoId}`);
+                const fileName = videoField.querySelector('.file-name');
+                
+                fileInput.addEventListener('change', () => {
+                    if (fileInput.files.length > 0) {
+                        fileName.textContent = fileInput.files[0].name;
+                        
+                        // Create video preview
+                        const preview = document.createElement('video');
+                        preview.src = URL.createObjectURL(fileInput.files[0]);
+                        preview.controls = true;
+                        preview.style.maxWidth = '100%';
+                        preview.style.marginTop = '1rem';
+                        
+                        // Remove existing preview if any
+                        const oldPreview = videoField.querySelector('video');
+                        if (oldPreview) oldPreview.remove();
+                        
+                        videoField.insertBefore(preview, fileInput.parentNode.nextSibling);
+                    } else {
+                        fileName.textContent = 'No file selected';
+                        const preview = videoField.querySelector('video');
+                        if (preview) preview.remove();
+                    }
+                });
+                
+                // Remove video field
+                videoField.querySelector('.remove-video-btn').addEventListener('click', () => {
+                    videoUploadsContainer.removeChild(videoField);
+                });
+            };
+
+            // Show course videos in modal
+            window.showCourseVideosModal = (course) => {
+                const modal = document.getElementById('courseVideosModal');
+                const modalTitle = document.getElementById('modalCourseTitle');
+                const videosList = document.getElementById('courseVideosList');
+                
+                modalTitle.textContent = course.title;
+                videosList.innerHTML = '';
+                
+                course.videos.forEach(video => {
+                    const videoElement = document.createElement('div');
+                    videoElement.className = 'video-item';
+                    videoElement.innerHTML = `
+                        <h3>${video.title}</h3>
+                        <video controls>
+                            <source src="${video.videoUrl}" type="video/mp4">
+                        </video>
+                    `;
+                    videosList.appendChild(videoElement);
+                });
+                
+                modal.style.display = 'block';
+            };
+
+            // Close modal when clicking X
+            document.querySelector('.close-modal').addEventListener('click', () => {
+                document.getElementById('courseVideosModal').style.display = 'none';
+            });
+
+            // Close modal when clicking outside
+            window.addEventListener('click', (e) => {
+                const modal = document.getElementById('courseVideosModal');
+                if (e.target === modal) {
+                    modal.style.display = 'none';
+                }
+            });
+
+            // Add first video field by default
+            addVideoField();
+            
+            // Add video button click handler
+            addVideoBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                addVideoField();
+            });
+
+            // Handle course creation
+            createCourseForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const button = e.target.querySelector('button[type="submit"]');
+                const originalText = button.innerHTML;
+
+                try {
+                    // Validate
+                    const courseTitle = document.getElementById('courseTitle').value.trim();
+                    const thumbnailInput = document.getElementById('courseThumbnail');
+                    const videoFields = document.querySelectorAll('.video-upload-field');
+                    
+                    if (!courseTitle || !thumbnailInput.files.length || videoFields.length === 0) {
+                        showToast('Please provide course title, thumbnail, and at least one video', 'error');
+                        return;
+                    }
+
+                    // Prepare UI
+                    button.disabled = true;
+                    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating Course...';
+
+                    // Prepare FormData for file uploads
+                    const formData = new FormData();
+                    formData.append('title', courseTitle);
+                    formData.append('thumbnail', thumbnailInput.files[0]);
+                    
+                    // Add all videos to FormData
+                    videoFields.forEach((field, index) => {
+                        const title = field.querySelector('.video-title').value.trim();
+                        const fileInput = field.querySelector('.video-file');
+                        
+                        if (!title || !fileInput.files.length) {
+                            throw new Error('Please fill all video titles and select files');
+                        }
+                        
+                        formData.append(`videos[${index}][title]`, title);
+                        formData.append(`videos[${index}][file]`, fileInput.files[0]);
+                    });
+
+                    // Create course
+                    const response = await fetch('/courses', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const result = await response.json();
+                    
+                    if (!response.ok) throw new Error(result.message || 'Course creation failed');
+
+                    // Success
+                    showToast('Course created successfully!', 'success');
+                    createCourseForm.reset();
+                    document.getElementById('thumbnailPreview').innerHTML = '';
+                    videoUploadsContainer.innerHTML = '';
+                    addVideoField(); // Add one empty field after reset
+                    loadMyCourses();
+
+                } catch (error) {
+                    showToast(error.message, 'error');
+                    console.error('Course creation error:', error);
+                } finally {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                }
+            });
+
+            // Load instructor's courses
+            const loadMyCourses = async () => {
+                try {
+                    const response = await fetch('/courses/my-courses');
+                    const { courses } = await response.json();
+                    
+                    // In the loadMyCourses function:
+myCoursesList.innerHTML = courses.map(course => `
+    <div class="course-card" onclick="showCourseVideosModal(${JSON.stringify(course).replace(/"/g, '&quot;')})">
+        <div class="course-thumbnail">
+            ${course.thumbnailUrl ? `
+                <img src="${course.thumbnailUrl}" alt="${course.title}">
+            ` : '<div class="no-thumbnail">No thumbnail</div>'}
+        </div>
+        <div class="course-info">
+            <h3>${course.title}</h3>  <!-- This line shows the title -->
+            <p class="video-count"><i class="fas fa-video"></i> ${course.videos.length} videos</p>
+            <div class="stats">
+                <span><i class="fas fa-users"></i> ${course.studentsEnrolled.length} Enrolled</span>
+            </div>
+        </div>
+    </div>
+`).join('');
+
+                } catch (error) {
+                    showToast('Failed to load courses', 'error');
+                }
+            };
+
+            // Toast notification
+            function showToast(message, type) {
+                const toast = document.createElement('div');
+                toast.className = `toast ${type}`;
+                toast.innerHTML = `
+                    <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
+                    ${message}
+                `;
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 3000);
+            }
+
+            // Initial load
+            loadMyCourses();
+        });
+    </script>
+</body>
+</html>

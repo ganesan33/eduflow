@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Dashboard</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/dashboard.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* Course Card Styles */
+        .course-card {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+        
+        .course-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .course-thumbnail {
+            height: 160px;
+            background: #f5f5f5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+        
+        .course-thumbnail img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .no-thumbnail {
+            color: #999;
+            font-size: 2rem;
+        }
+        
+        .course-info {
+            padding: 1rem;
+        }
+        
+        .course-title {
+            margin: 0 0 0.5rem 0;
+            font-size: 1.1rem;
+            color: #333;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .course-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+            font-size: 0.9rem;
+            color: #666;
+        }
+        
+        .enroll-btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 0.8rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            width: 100%;
+            transition: background 0.2s;
+        }
+        
+        .enroll-btn:hover:not(:disabled) {
+            background: var(--primary-dark);
+        }
+        
+        .enroll-btn:disabled {
+            background: var(--success);
+            cursor: not-allowed;
+        }
+        
+        .progress {
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            margin-top: 0.8rem;
+            overflow: hidden;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background: var(--primary);
+            transition: width 0.5s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-container">
+        <aside class="sidebar">
+            <div class="brand">
+                <i class="fas fa-user-graduate"></i>
+                <h2>EduFlow</h2>
+            </div>
+            <nav>
+                <a href="#" class="active"><i class="fas fa-home"></i> Dashboard</a>
+                <a href="#my-learning"><i class="fas fa-book"></i> My Learning</a>
+                <a href="/logout" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Logout</a>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <header class="dashboard-header">
+                <h1>Student Dashboard</h1>
+                <div class="user-profile">
+                    <span>Welcome, Student</span>
+                    <div class="avatar"><i class="fas fa-user"></i></div>
+                </div>
+            </header>
+
+            <section class="courses-section">
+                <div class="section-header">
+                    <h2><i class="fas fa-book-open"></i> Available Courses</h2>
+                    <div class="search-box">
+                        <i class="fas fa-search"></i>
+                        <input type="text" id="searchCourses" placeholder="Search courses...">
+                    </div>
+                </div>
+                <div class="courses-grid" id="courseList"></div>
+            </section>
+
+            <section class="courses-section" id="my-learning">
+                <div class="section-header">
+                    <h2><i class="fas fa-book"></i> My Learning</h2>
+                </div>
+                <div class="courses-grid" id="myLearningList"></div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Course Videos Modal -->
+    <div id="courseVideosModal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h2 id="modalCourseTitle"></h2>
+            <div id="courseProgress" class="progress-container"></div>
+            <div id="courseVideosList" class="videos-container"></div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const courseList = document.getElementById('courseList');
+            const myLearningList = document.getElementById('myLearningList');
+            const searchInput = document.getElementById('searchCourses');
+            let allCourses = [];
+            let enrolledCourses = [];
+
+            // Load available courses
+            const loadCourses = async () => {
+                try {
+                    const response = await fetch('/courses');
+                    const { courses } = await response.json();
+                    allCourses = courses;
+                    renderCourses(courses, courseList);
+                } catch (error) {
+                    showError('Failed to load courses');
+                }
+            };
+
+            // Load enrolled courses
+            const loadEnrolledCourses = async () => {
+                try {
+                    const response = await fetch('/courses/enrolled');
+                    const { courses } = await response.json();
+                    enrolledCourses = courses;
+                    renderEnrolledCourses(courses);
+                } catch (error) {
+                    showError('Failed to load enrolled courses');
+                }
+            };
+
+            // Render available courses
+            const renderCourses = (courses, container) => {
+                container.innerHTML = courses.map(course => {
+                    const isEnrolled = enrolledCourses.some(c => c._id === course._id);
+                    return `
+                        <div class="course-card">
+                            <div class="course-thumbnail" onclick="showCourseVideosModal(${JSON.stringify(course).replace(/"/g, '&quot;')})">
+                                ${course.thumbnailUrl ? `
+                                    <img src="${course.thumbnailUrl}" alt="${course.title}">
+                                ` : '<div class="no-thumbnail"><i class="fas fa-image"></i></div>'}
+                            </div>
+                            <div class="course-info">
+                                <h3 class="course-title">${course.title}</h3>
+                                <div class="course-meta">
+                                    <span><i class="fas fa-chalkboard-teacher"></i> ${course.instructor.email}</span>
+                                    <span><i class="fas fa-video"></i> ${course.videos.length} videos</span>
+                                </div>
+                                <button class="enroll-btn" onclick="event.stopPropagation(); enrollCourse('${course._id}', this)" ${isEnrolled ? 'disabled' : ''}>
+                                    <i class="fas fa-${isEnrolled ? 'check' : 'bookmark'}"></i>
+                                    ${isEnrolled ? 'Enrolled' : 'Enroll Now'}
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            };
+
+            // Render enrolled courses
+            const renderEnrolledCourses = (courses) => {
+                // In the renderEnrolledCourses function
+// In the renderEnrolledCourses function
+myLearningList.innerHTML = courses.map(course => `
+    <div class="course-card">
+        <div class="course-thumbnail" onclick="showCourseVideosModal(${JSON.stringify(course).replace(/"/g, '&quot;')})">
+            ${course.thumbnailUrl ? `
+                <img src="${course.thumbnailUrl}" alt="${course.title}">
+            ` : '<div class="no-thumbnail"><i class="fas fa-image"></i></div>'}
+        </div>
+        <div class="course-info">
+            <h3 class="course-title">${course.title}</h3>
+            <div class="course-meta">
+                <span><i class="fas fa-chalkboard-teacher"></i> ${course.instructor.email}</span>
+                <span><i class="fas fa-video"></i> ${course.videos.length} videos</span>
+            </div>
+            <div class="progress">
+                <div class="progress-bar" style="width: ${calculateProgress(course)}%"></div>
+            </div>
+            <div class="progress-text">
+                ${course.watchedVideos?.length || 0} of ${course.videos.length} videos watched
+            </div>
+        </div>
+    </div>
+`).join('');
+            };
+
+            // Calculate course progress
+          // Calculate course progress
+// Calculate course progress
+const calculateProgress = (course) => {
+    if (!course.watchedVideos) return 0;
+    return Math.round((course.watchedVideos.length / course.videos.length) * 100);
+};
+
+            // Enroll in course
+            window.enrollCourse = async (courseId, button) => {
+                try {
+                    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enrolling...';
+                    const response = await fetch(`/courses/enroll/${courseId}`, {
+                        method: 'POST'
+                    });
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.success) {
+                            showToast('Enrolled successfully!', 'success');
+                            button.innerHTML = '<i class="fas fa-check"></i> Enrolled';
+                            button.disabled = true;
+                            loadEnrolledCourses();
+                        } else {
+                            throw new Error(result.message);
+                        }
+                    } else {
+                        throw new Error('Enrollment failed');
+                    }
+                } catch (error) {
+                    showToast(error.message || 'Enrollment failed', 'error');
+                    button.innerHTML = '<i class="fas fa-bookmark"></i> Enroll Now';
+                }
+            };
+
+            // Show course videos modal
+            // Inside the showCourseVideosModal function
+            window.showCourseVideosModal = async (course) => {
+    const modal = document.getElementById('courseVideosModal');
+    const modalTitle = document.getElementById('modalCourseTitle');
+    const videosList = document.getElementById('courseVideosList');
+    const progressContainer = document.getElementById('courseProgress');
+    
+    modalTitle.textContent = course.title;
+    videosList.innerHTML = '';
+    
+    // Calculate progress
+    const watchedCount = course.watchedVideos?.length || 0;
+    const totalVideos = course.videos.length;
+    const progressPercent = course.isCompleted ? 100 : Math.round((watchedCount / totalVideos) * 100);
+
+    progressContainer.innerHTML = `
+        <p>Your progress: <span id="progressPercent">${progressPercent}</span>%</p>
+        <div class="progress">
+            <div class="progress-fill" style="width: ${progressPercent}%"></div>
+        </div>
+        ${course.isCompleted ? '<p class="completed-badge"><i class="fas fa-check-circle"></i> Course Completed</p>' : ''}
+    `;
+
+    // Add all videos
+    course.videos.forEach(video => {
+        const isWatched = course.isCompleted || course.watchedVideos?.some(v => v.videoId.toString() === video._id.toString());
+        
+        const videoElement = document.createElement('div');
+        videoElement.className = 'video-item';
+        videoElement.innerHTML = `
+            <h3>${video.title} ${isWatched ? '<i class="fas fa-check-circle watched-icon"></i>' : ''}</h3>
+            <video controls id="video-${video._id}" data-video-id="${video._id}" ${isWatched ? 'data-watched="true"' : ''}>
+                <source src="${video.videoUrl}" type="video/mp4">
+            </video>
+            <div class="video-status" id="status-${video._id}">
+                ${isWatched ? '<span><i class="fas fa-check-circle"></i> Watched</span>' : ''}
+            </div>
+        `;
+        videosList.appendChild(videoElement);
+
+        // Only track progress if course isn't already completed
+        if (!course.isCompleted) {
+            const videoEl = document.getElementById(`video-${video._id}`);
+            let hasBeenWatched = isWatched;
+
+            videoEl.addEventListener('timeupdate', async function() {
+                // Consider video watched if they've seen at least 80% of it
+                if (!hasBeenWatched && this.currentTime > this.duration * 0.8) {
+                    hasBeenWatched = true;
+                    document.getElementById(`status-${video._id}`).innerHTML = 
+                        '<span><i class="fas fa-check-circle"></i> Watched</span>';
+                    
+                    // Send progress update to server
+                    await fetch(`/courses/${course._id}/videos/${video._id}/watch`, {
+                        method: 'POST'
+                    });
+
+                    // Update progress display
+                    const newWatchedCount = watchedCount + 1;
+                    const newPercent = Math.round((newWatchedCount / totalVideos) * 100);
+                    document.getElementById('progressPercent').textContent = newPercent;
+                    document.querySelector('.progress-fill').style.width = `${newPercent}%`;
+
+                    // If all videos watched, show completion
+                    if (newWatchedCount >= totalVideos) {
+                        progressContainer.innerHTML += '<p class="completed-badge"><i class="fas fa-check-circle"></i> Course Completed</p>';
+                        // Reload the course data to get the updated completion status
+                        const response = await fetch('/courses/enrolled');
+                        const { courses } = await response.json();
+                        const updatedCourse = courses.find(c => c._id === course._id);
+                        course.isCompleted = updatedCourse.isCompleted;
+                    }
+                }
+            });
+        }
+    });
+    
+    modal.style.display = 'block';
+};
+
+            // Close modal
+            document.querySelector('.close-modal').addEventListener('click', () => {
+                document.getElementById('courseVideosModal').style.display = 'none';
+            });
+
+            // Close modal when clicking outside
+            window.addEventListener('click', (e) => {
+                const modal = document.getElementById('courseVideosModal');
+                if (e.target === modal) {
+                    modal.style.display = 'none';
+                }
+            });
+
+            // Search functionality
+            searchInput.addEventListener('input', (e) => {
+                const query = e.target.value.toLowerCase();
+                const filtered = allCourses.filter(c => 
+                    c.title.toLowerCase().includes(query) ||
+                    c.instructor.email.toLowerCase().includes(query)
+                );
+                renderCourses(filtered, courseList);
+            });
+
+            // Error display
+            function showError(message) {
+                courseList.innerHTML = `
+                    <div class="error">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p>${message}</p>
+                    </div>
+                `;
+            }
+
+            // Toast notification
+            function showToast(message, type) {
+                const toast = document.createElement('div');
+                toast.className = `toast ${type}`;
+                toast.innerHTML = `
+                    <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
+                    ${message}
+                `;
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 3000);
+            }
+
+            // Initial load
+            loadCourses();
+            loadEnrolledCourses();
+        });
+    </script>
+</body>
+</html>
