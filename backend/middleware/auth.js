@@ -18,7 +18,7 @@ const ensureAuth = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
-    const user = await User.findById(decoded.sub).select('email role tokenVersion').lean();
+    const user = await User.findById(decoded.sub).select('email role tokenVersion emailVerified').lean();
 
     if (!user || user.tokenVersion !== decoded.tv) {
       return res.status(401).json({ success: false, message: 'Token revoked' });
@@ -28,7 +28,8 @@ const ensureAuth = async (req, res, next) => {
       id: String(decoded.sub),
       email: user.email,
       role: user.role,
-      tokenVersion: user.tokenVersion
+      tokenVersion: user.tokenVersion,
+      emailVerified: user.emailVerified
     };
 
     return next();

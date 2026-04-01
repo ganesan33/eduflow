@@ -18,6 +18,26 @@ const userSchema = new mongoose.Schema({
     enum: ['student', 'instructor', 'admin'],
     default: 'student'
   },
+  emailVerified: {
+    type: Boolean,
+    default: false
+  },
+  emailVerificationTokenHash: {
+    type: String,
+    default: null
+  },
+  emailVerificationExpiresAt: {
+    type: Date,
+    default: null
+  },
+  passwordResetTokenHash: {
+    type: String,
+    default: null
+  },
+  passwordResetExpiresAt: {
+    type: Date,
+    default: null
+  },
   tokenVersion: {
     type: Number,
     default: 0
@@ -51,6 +71,29 @@ const userSchema = new mongoose.Schema({
       default: false
     },
     completedAt: Date
+  }],
+  playbackPositions: [{
+    courseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Course',
+      required: true
+    },
+    videoId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true
+    },
+    positionSeconds: {
+      type: Number,
+      default: 0
+    },
+    durationSeconds: {
+      type: Number,
+      default: 0
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now
+    }
   }],
   createdAt: {
     type: Date,

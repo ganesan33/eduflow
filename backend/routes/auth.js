@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
 const { ensureAuth } = require('../middleware/auth');
+const { sendEmail } = require('../utils/mailer');
 
 const router = express.Router();
 
@@ -18,8 +19,40 @@ const authLimiter = rateLimit({
 
 router.use(['/login', '/signup', '/refresh'], authLimiter);
 
+const emailFlowLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests. Try again later.' }
+});
+
+router.use(['/verify-email/request', '/password-reset/request'], emailFlowLimiter);
+
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function generateOneTimeToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function getAppBaseUrl() {
+  return process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
+}
+
+async function trySendEmail(emailPayload) {
+  try {
+    const result = await sendEmail(emailPayload);
+    const acceptedCount = Array.isArray(result.accepted) ? result.accepted.length : 0;
+    if (acceptedCount > 0) {
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Email delivery error:', error.message || error);
+    return false;
+  }
 }
 
 function buildCookieOptions() {
@@ -91,6 +124,13 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid credentials' });
     }
 
+    if (!user.emailVerified) {
+      return res.status(403).json({
+        success: false,
+        message: 'Please verify your email before signing in'
+      });
+    }
+
     await issueAuthCookies(res, user);
 
     return res.json({
@@ -98,7 +138,8 @@ router.post('/login', async (req, res) => {
       user: {
         id: user._id,
         email: user.email,
-        role: user.role
+        role: user.role,
+        emailVerified: user.emailVerified
       }
     });
   } catch (error) {
@@ -109,7 +150,7 @@ router.post('/login', async (req, res) => {
 
 router.post('/signup', async (req, res) => {
   try {
-    const { email, password, role } = req.body;
+    const { email, password } = req.body;
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -119,9 +160,104 @@ router.post('/signup', async (req, res) => {
     const user = new User({
       email,
       password,
-      role: role || 'student'
+      role: 'student',
+      emailVerified: false
     });
 
+    await user.save();
+
+    const token = generateOneTimeToken();
+    user.emailVerificationTokenHash = hashToken(token);
+    user.emailVerificationExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await user.save();
+
+    const verificationLink = `${getAppBaseUrl()}/login?mode=verify&email=${encodeURIComponent(user.email)}&token=${token}`;
+    const emailSent = await trySendEmail({
+      to: user.email,
+      subject: 'Verify your EduFlow email',
+      text: `Welcome to EduFlow. Verify your email by opening this link: ${verificationLink}`,
+      html: `<p>Welcome to EduFlow.</p><p>Please verify your email by clicking <a href="${verificationLink}">Verify Email</a>.</p><p>This link expires in 30 minutes.</p>`
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: emailSent
+        ? 'Signup successful. Verification email sent. Please check inbox, spam, or promotions.'
+        : 'Signup successful. Verification email could not be sent right now. Please use resend verification after SMTP is available.'
+    });
+  } catch (error) {
+    console.error('Signup error:', error);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+router.post('/verify-email/request', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email is required' });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user || user.emailVerified) {
+      return res.json({ success: true, message: 'If the account exists, a verification email has been sent.' });
+    }
+
+    const token = generateOneTimeToken();
+    user.emailVerificationTokenHash = hashToken(token);
+    user.emailVerificationExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await user.save();
+
+    const verificationLink = `${getAppBaseUrl()}/login?mode=verify&email=${encodeURIComponent(user.email)}&token=${token}`;
+    await trySendEmail({
+      to: user.email,
+      subject: 'Verify your EduFlow email',
+      text: `Verify your email by opening this link: ${verificationLink}`,
+      html: `<p>Please verify your email by clicking <a href="${verificationLink}">Verify Email</a>.</p><p>This link expires in 30 minutes.</p>`
+    });
+
+    return res.json({
+      success: true,
+      message: emailSent
+        ? 'If the account exists, a verification email has been sent. Check inbox, spam, or promotions.'
+        : 'If the account exists, we could not send email right now. Please try again shortly.'
+    });
+  } catch (error) {
+    console.error('Verify email request error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to process request' });
+  }
+});
+
+router.post('/verify-email/confirm', async (req, res) => {
+  try {
+    const { email, token } = req.body;
+
+    if (!email || !token) {
+      return res.status(400).json({ success: false, message: 'Email and token are required' });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'Invalid verification request' });
+    }
+
+    if (user.emailVerified) {
+      return res.json({ success: true, message: 'Email already verified' });
+    }
+
+    const tokenHash = hashToken(token);
+    const tokenValid = user.emailVerificationTokenHash
+      && user.emailVerificationTokenHash === tokenHash
+      && user.emailVerificationExpiresAt
+      && user.emailVerificationExpiresAt > new Date();
+
+    if (!tokenValid) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired verification token' });
+    }
+
+    user.emailVerified = true;
+    user.emailVerificationTokenHash = null;
+    user.emailVerificationExpiresAt = null;
     await user.save();
 
     await issueAuthCookies(res, user);
@@ -131,12 +267,89 @@ router.post('/signup', async (req, res) => {
       user: {
         id: user._id,
         email: user.email,
-        role: user.role
+        role: user.role,
+        emailVerified: user.emailVerified
       }
     });
   } catch (error) {
-    console.error('Signup error:', error);
-    return res.status(500).json({ success: false, message: 'Server error' });
+    console.error('Verify email confirm error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to verify email' });
+  }
+});
+
+router.post('/password-reset/request', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email is required' });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.json({ success: true, message: 'If the account exists, a reset email has been sent.' });
+    }
+
+    const token = generateOneTimeToken();
+    user.passwordResetTokenHash = hashToken(token);
+    user.passwordResetExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await user.save();
+
+    const resetLink = `${getAppBaseUrl()}/login?mode=reset&email=${encodeURIComponent(user.email)}&token=${token}`;
+    const emailSent = await trySendEmail({
+      to: user.email,
+      subject: 'Reset your EduFlow password',
+      text: `Reset your password by opening this link: ${resetLink}`,
+      html: `<p>You requested a password reset.</p><p>Click <a href="${resetLink}">Reset Password</a> to continue.</p><p>This link expires in 30 minutes.</p>`
+    });
+
+    return res.json({
+      success: true,
+      message: emailSent
+        ? 'If the account exists, a reset email has been sent. Check inbox, spam, or promotions.'
+        : 'If the account exists, we could not send email right now. Please try again shortly.'
+    });
+  } catch (error) {
+    console.error('Password reset request error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to process request' });
+  }
+});
+
+router.post('/password-reset/confirm', async (req, res) => {
+  try {
+    const { email, token, newPassword } = req.body;
+
+    if (!email || !token || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Email, token and new password are required' });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'Invalid reset request' });
+    }
+
+    const tokenHash = hashToken(token);
+    const tokenValid = user.passwordResetTokenHash
+      && user.passwordResetTokenHash === tokenHash
+      && user.passwordResetExpiresAt
+      && user.passwordResetExpiresAt > new Date();
+
+    if (!tokenValid) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired reset token' });
+    }
+
+    user.password = newPassword;
+    user.passwordResetTokenHash = null;
+    user.passwordResetExpiresAt = null;
+    await user.save();
+
+    return res.json({ success: true, message: 'Password reset successful. Please sign in.' });
+  } catch (error) {
+    console.error('Password reset confirm error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to reset password' });
   }
 });
 
@@ -157,7 +370,7 @@ router.post('/refresh', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid refresh token' });
     }
 
-    const user = await User.findById(decoded.sub).select('email role tokenVersion refreshTokenHash');
+    const user = await User.findById(decoded.sub).select('email role tokenVersion refreshTokenHash emailVerified');
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid refresh token' });
     }
@@ -173,7 +386,8 @@ router.post('/refresh', async (req, res) => {
       user: {
         id: user._id,
         email: user.email,
-        role: user.role
+        role: user.role,
+        emailVerified: user.emailVerified
       }
     });
   } catch (error) {

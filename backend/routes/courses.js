@@ -10,15 +10,30 @@ const {
 
 const router = express.Router();
 
+function recalculateRatings(course) {
+  const ratingsCount = course.reviews.length;
+  const totalRating = course.reviews.reduce((sum, review) => sum + review.rating, 0);
+  course.ratingsCount = ratingsCount;
+  course.averageRating = ratingsCount ? Number((totalRating / ratingsCount).toFixed(2)) : 0;
+}
+
 function withSignedMedia(course) {
   const plainCourse = typeof course.toObject === 'function' ? course.toObject() : { ...course };
 
   return {
     ...plainCourse,
+    averageRating: plainCourse.averageRating || 0,
+    ratingsCount: plainCourse.ratingsCount || 0,
+    videos: (plainCourse.videos || [])
+      .sort((a, b) => (a.order || 0) - (b.order || 0))
+      .map((video) => ({
+        ...video,
+        videoUrl: signBlobReadUrl(video.videoUrl)
+      })),
     thumbnailUrl: signBlobReadUrl(plainCourse.thumbnailUrl),
-    videos: (plainCourse.videos || []).map((video) => ({
-      ...video,
-      videoUrl: signBlobReadUrl(video.videoUrl)
+    reviews: (plainCourse.reviews || []).map((review) => ({
+      ...review,
+      comment: review.comment || ''
     }))
   };
 }
@@ -39,7 +54,7 @@ router.post('/', ensureRole('instructor'), async (req, res) => {
       return res.status(400).json({ success: false, message: 'No thumbnail image uploaded' });
     }
 
-    const { title } = req.body;
+    const { title, category, level } = req.body;
     const thumbnail = req.files.thumbnail;
 
     const thumbnailBlobName = `thumbnail-${Date.now()}-${thumbnail.name.replace(/\s+/g, '-')}`;
@@ -88,6 +103,8 @@ router.post('/', ensureRole('instructor'), async (req, res) => {
 
     const newCourse = new Course({
       title,
+      category: category || 'general',
+      level: level || 'beginner',
       thumbnailUrl: thumbnailBlobClient.url,
       videos,
       instructor: req.user.id
@@ -104,8 +121,108 @@ router.post('/', ensureRole('instructor'), async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const courses = await Course.find().populate('instructor', 'email');
-    return res.json({ success: true, courses: courses.map(withSignedMedia) });
+    const {
+      q = '',
+      category,
+      level,
+      minRating,
+      sort = 'newest'
+    } = req.query;
+
+    const filter = {};
+
+    if (q) {
+      filter.$or = [
+        { title: { $regex: q, $options: 'i' } },
+        { category: { $regex: q, $options: 'i' } }
+      ];
+    }
+
+    if (category && category !== 'all') {
+      filter.category = category;
+    }
+
+    if (level && level !== 'all') {
+      filter.level = level;
+    }
+
+    if (minRating) {
+      filter.averageRating = { $gte: Number(minRating) || 0 };
+    }
+
+    const sortMap = {
+      newest: { createdAt: -1 },
+      'top-rated': { averageRating: -1, ratingsCount: -1 },
+      popular: { 'studentsEnrolled.length': -1 }
+    };
+
+    const courses = await Course.find(filter)
+      .populate('instructor', 'email')
+      .sort(sortMap[sort] || sortMap.newest);
+
+    const sortedCourses = sort === 'popular'
+      ? courses.sort((a, b) => (b.studentsEnrolled.length || 0) - (a.studentsEnrolled.length || 0))
+      : courses;
+
+    return res.json({ success: true, courses: sortedCourses.map(withSignedMedia) });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+router.get('/my-courses/analytics', ensureRole('instructor'), async (req, res) => {
+  try {
+    const courses = await Course.find({ instructor: req.user.id })
+      .populate('studentsEnrolled', 'videoProgress')
+      .lean();
+
+    let totalEnrollments = 0;
+    let completionSamples = 0;
+    let completedCount = 0;
+
+    const topCourses = courses.map((course) => {
+      const enrolled = course.studentsEnrolled?.length || 0;
+      totalEnrollments += enrolled;
+
+      let courseCompleted = 0;
+      for (const student of course.studentsEnrolled || []) {
+        const progress = (student.videoProgress || []).find(
+          (item) => String(item.courseId) === String(course._id)
+        );
+
+        if (progress) {
+          completionSamples += 1;
+          if (progress.completed) {
+            completedCount += 1;
+            courseCompleted += 1;
+          }
+        }
+      }
+
+      const completionRate = enrolled ? Math.round((courseCompleted / enrolled) * 100) : 0;
+
+      return {
+        courseId: course._id,
+        title: course.title,
+        enrollments: enrolled,
+        completionRate,
+        averageRating: course.averageRating || 0,
+        ratingsCount: course.ratingsCount || 0
+      };
+    }).sort((a, b) => b.enrollments - a.enrollments);
+
+    return res.json({
+      success: true,
+      analytics: {
+        totalCourses: courses.length,
+        totalEnrollments,
+        completionRate: completionSamples ? Math.round((completedCount / completionSamples) * 100) : 0,
+        averageCourseRating: courses.length
+          ? Number((courses.reduce((sum, c) => sum + (c.averageRating || 0), 0) / courses.length).toFixed(2))
+          : 0,
+        topCourses: topCourses.slice(0, 5)
+      }
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Server error' });
   }
@@ -164,18 +281,78 @@ router.get('/enrolled', ensureRole('student'), async (req, res) => {
         (item) => item.courseId.toString() === course._id.toString()
       );
 
+      const playbackPositions = user.playbackPositions
+        .filter((item) => item.courseId.toString() === course._id.toString())
+        .map((item) => ({
+          videoId: item.videoId,
+          positionSeconds: item.positionSeconds,
+          durationSeconds: item.durationSeconds,
+          updatedAt: item.updatedAt
+        }));
+
       const signedCourse = withSignedMedia(course);
 
       return {
         ...signedCourse,
         watchedVideos: progress?.watchedVideos || [],
-        isCompleted: progress?.completed || false
+        isCompleted: progress?.completed || false,
+        playbackPositions
       };
     });
 
     return res.json({ success: true, courses: coursesWithProgress });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+router.patch('/:id', ensureRole('instructor'), async (req, res) => {
+  try {
+    const { title, category, level, videos } = req.body;
+    const course = await Course.findById(req.params.id);
+
+    if (!course) {
+      return res.status(404).json({ success: false, message: 'Course not found' });
+    }
+
+    if (String(course.instructor) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
+    }
+
+    if (title && title.trim()) {
+      course.title = title.trim();
+    }
+
+    if (category && category.trim()) {
+      course.category = category.trim();
+    }
+
+    if (level && ['beginner', 'intermediate', 'advanced'].includes(level)) {
+      course.level = level;
+    }
+
+    if (Array.isArray(videos) && videos.length) {
+      const updatesById = new Map(videos.map((video, index) => [String(video._id), { ...video, order: index }]));
+      course.videos = course.videos
+        .map((video) => {
+          const update = updatesById.get(String(video._id));
+          if (!update) {
+            return video;
+          }
+
+          video.title = update.title?.trim() || video.title;
+          video.order = update.order;
+          return video;
+        })
+        .sort((a, b) => (a.order || 0) - (b.order || 0));
+    }
+
+    await course.save();
+
+    return res.json({ success: true, course: withSignedMedia(course) });
+  } catch (error) {
+    console.error('Course update error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to update course' });
   }
 });
 
@@ -235,6 +412,87 @@ router.post('/:courseId/videos/:videoId/watch', ensureRole('student'), async (re
   } catch (error) {
     console.error('Video progress error:', error);
     return res.status(500).json({ success: false, message: 'Failed to update video progress' });
+  }
+});
+
+router.post('/:courseId/videos/:videoId/playback', ensureRole('student'), async (req, res) => {
+  try {
+    const { courseId, videoId } = req.params;
+    const { positionSeconds = 0, durationSeconds = 0 } = req.body;
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const validPosition = Math.max(0, Number(positionSeconds) || 0);
+    const validDuration = Math.max(0, Number(durationSeconds) || 0);
+
+    const existing = user.playbackPositions.find(
+      (item) => item.courseId.toString() === courseId && item.videoId.toString() === videoId
+    );
+
+    if (existing) {
+      existing.positionSeconds = validPosition;
+      existing.durationSeconds = validDuration;
+      existing.updatedAt = new Date();
+    } else {
+      user.playbackPositions.push({
+        courseId,
+        videoId,
+        positionSeconds: validPosition,
+        durationSeconds: validDuration,
+        updatedAt: new Date()
+      });
+    }
+
+    await user.save();
+
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to save playback position' });
+  }
+});
+
+router.post('/:courseId/reviews', ensureRole('student'), async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const { rating, comment = '' } = req.body;
+
+    const numericRating = Number(rating);
+    if (!Number.isFinite(numericRating) || numericRating < 1 || numericRating > 5) {
+      return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5' });
+    }
+
+    const user = await User.findById(req.user.id).select('enrolledCourses');
+    if (!user || !user.enrolledCourses.some((id) => String(id) === courseId)) {
+      return res.status(403).json({ success: false, message: 'Only enrolled students can review this course' });
+    }
+
+    const course = await Course.findById(courseId);
+    if (!course) {
+      return res.status(404).json({ success: false, message: 'Course not found' });
+    }
+
+    const existingReview = course.reviews.find((review) => String(review.user) === req.user.id);
+    if (existingReview) {
+      existingReview.rating = numericRating;
+      existingReview.comment = comment.trim();
+      existingReview.updatedAt = new Date();
+    } else {
+      course.reviews.push({
+        user: req.user.id,
+        rating: numericRating,
+        comment: comment.trim()
+      });
+    }
+
+    recalculateRatings(course);
+    await course.save();
+
+    return res.json({ success: true, course: withSignedMedia(course) });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to submit review' });
   }
 });
 

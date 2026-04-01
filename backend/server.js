@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
 const express = require('express');
 const fileUpload = require('express-fileupload');
@@ -10,6 +11,7 @@ const connectDB = require('./config/db');
 const authRoutes = require('./routes/auth');
 const courseRoutes = require('./routes/courses');
 const adminRoutes = require('./routes/admin');
+const instructorRequestRoutes = require('./routes/instructorRequests');
 
 const app = express();
 
@@ -42,6 +44,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/instructor-requests', instructorRequestRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
