@@ -84,4 +84,9 @@ const courseSchema = new mongoose.Schema({
   }
 });
 
+// Indexes for Cosmos DB optimization
+courseSchema.index({ instructor: 1, createdAt: -1 });
+courseSchema.index({ category: 1, level: 1 });
+courseSchema.index({ averageRating: -1 });
+
 module.exports = mongoose.model('Course', courseSchema);

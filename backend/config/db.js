@@ -2,10 +2,18 @@ const mongoose = require('mongoose');
 
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log('MongoDB connected');
+    // Cosmos DB specific options
+    const options = {
+      retryWrites: false,  // Cosmos DB doesn't support retryable writes
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    };
+
+    await mongoose.connect(process.env.MONGO_URI, options);
+    console.log('Azure Cosmos DB connected');
   } catch (error) {
-    console.error('MongoDB connection failed:', error.message);
+    console.error('Cosmos DB connection failed:', error.message);
     process.exit(1);
   }
 };

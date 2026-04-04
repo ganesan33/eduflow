@@ -11,20 +11,34 @@ const router = express.Router();
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: 'Too many auth requests. Try again later.' }
+  skipSuccessfulRequests: true,
+  message: { success: false, message: 'Too many failed auth attempts. Try again later.' },
+  validate: { trustProxy: false }
 });
 
-router.use(['/login', '/signup', '/refresh'], authLimiter);
+router.use(['/login', '/signup'], authLimiter);
 
-const emailFlowLimiter = rateLimit({
+const refreshLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: 'Too many requests. Try again later.' }
+  message: { success: false, message: 'Too many refresh requests. Try again later.' },
+  validate: { trustProxy: false }
+});
+
+router.use('/refresh', refreshLimiter);
+
+const emailFlowLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests. Try again later.' },
+  validate: { trustProxy: false }
 });
 
 router.use(['/verify-email/request', '/password-reset/request'], emailFlowLimiter);
@@ -55,13 +69,15 @@ async function trySendEmail(emailPayload) {
   }
 }
 
-function buildCookieOptions() {
-  return {
+function buildCookieOptions(isRefreshToken = false) {
+  const baseOptions = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/'
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    path: isRefreshToken ? '/api/auth/refresh' : '/'
   };
+  
+  return baseOptions;
 }
 
 function generateAccessToken(user) {
@@ -75,39 +91,74 @@ function generateAccessToken(user) {
   });
 }
 
-function generateRefreshToken(user) {
+function generateRefreshToken(user, tokenFamily) {
   return jwt.sign({
     sub: String(user._id),
     tv: user.tokenVersion,
-    type: 'refresh'
+    type: 'refresh',
+    family: tokenFamily,
+    jti: crypto.randomBytes(16).toString('hex')
   }, process.env.JWT_REFRESH_SECRET, {
     expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d'
   });
 }
 
-async function issueAuthCookies(res, userDoc) {
+function getClientInfo(req) {
+  // Try multiple sources for IP address
+  let ipAddress = 'unknown';
+  
+  if (req.ip) {
+    ipAddress = req.ip;
+  } else if (req.headers['x-forwarded-for']) {
+    ipAddress = req.headers['x-forwarded-for'].split(',')[0].trim();
+  } else if (req.connection && req.connection.remoteAddress) {
+    ipAddress = req.connection.remoteAddress;
+  } else if (req.socket && req.socket.remoteAddress) {
+    ipAddress = req.socket.remoteAddress;
+  }
+  
+  const userAgent = req.get('user-agent') || 'unknown';
+  return { ipAddress, userAgent };
+}
+
+async function issueAuthCookies(res, userDoc, req, tokenFamily = null) {
   const accessToken = generateAccessToken(userDoc);
-  const refreshToken = generateRefreshToken(userDoc);
+  
+  const newTokenFamily = tokenFamily || crypto.randomBytes(16).toString('hex');
+  const refreshToken = generateRefreshToken(userDoc, newTokenFamily);
+  
+  const { ipAddress, userAgent } = getClientInfo(req);
+  
+  const refreshExpiresIn = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
+  const expiresAt = new Date();
+  if (refreshExpiresIn.endsWith('d')) {
+    expiresAt.setDate(expiresAt.getDate() + parseInt(refreshExpiresIn));
+  } else if (refreshExpiresIn.endsWith('h')) {
+    expiresAt.setHours(expiresAt.getHours() + parseInt(refreshExpiresIn));
+  }
+  
+  await userDoc.addRefreshToken(
+    hashToken(refreshToken),
+    newTokenFamily,
+    expiresAt,
+    ipAddress,
+    userAgent
+  );
 
-  await User.findByIdAndUpdate(userDoc._id, {
-    refreshTokenHash: hashToken(refreshToken)
-  });
-
-  const cookieOptions = buildCookieOptions();
   res.cookie('access_token', accessToken, {
-    ...cookieOptions,
+    ...buildCookieOptions(false),
     maxAge: 15 * 60 * 1000
   });
+  
   res.cookie('refresh_token', refreshToken, {
-    ...cookieOptions,
+    ...buildCookieOptions(true),
     maxAge: 7 * 24 * 60 * 60 * 1000
   });
 }
 
 function clearAuthCookies(res) {
-  const cookieOptions = buildCookieOptions();
-  res.clearCookie('access_token', cookieOptions);
-  res.clearCookie('refresh_token', cookieOptions);
+  res.clearCookie('access_token', buildCookieOptions(false));
+  res.clearCookie('refresh_token', buildCookieOptions(true));
 }
 
 router.post('/login', async (req, res) => {
@@ -131,7 +182,7 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    await issueAuthCookies(res, user);
+    await issueAuthCookies(res, user, req);
 
     return res.json({
       success: true,
@@ -260,7 +311,7 @@ router.post('/verify-email/confirm', async (req, res) => {
     user.emailVerificationExpiresAt = null;
     await user.save();
 
-    await issueAuthCookies(res, user);
+    await issueAuthCookies(res, user, req);
 
     return res.json({
       success: true,
@@ -365,21 +416,51 @@ router.post('/refresh', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Missing refresh token' });
     }
 
-    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    if (decoded.type !== 'refresh') {
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    } catch (error) {
       return res.status(401).json({ success: false, message: 'Invalid refresh token' });
     }
 
-    const user = await User.findById(decoded.sub).select('email role tokenVersion refreshTokenHash emailVerified');
+    if (decoded.type !== 'refresh' || !decoded.family) {
+      return res.status(401).json({ success: false, message: 'Invalid refresh token' });
+    }
+
+    const user = await User.findById(decoded.sub).select('email role tokenVersion refreshTokens emailVerified');
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid refresh token' });
     }
 
-    if (user.tokenVersion !== decoded.tv || user.refreshTokenHash !== hashToken(refreshToken)) {
+    if (user.tokenVersion !== decoded.tv) {
       return res.status(401).json({ success: false, message: 'Refresh token revoked' });
     }
 
-    await issueAuthCookies(res, user);
+    await user.cleanExpiredTokens();
+
+    const tokenHash = hashToken(refreshToken);
+    const storedToken = user.refreshTokens.find(
+      t => t.tokenHash === tokenHash && t.tokenFamily === decoded.family
+    );
+
+    if (!storedToken) {
+      await user.revokeTokenFamily(decoded.family);
+      clearAuthCookies(res);
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Refresh token reuse detected. All tokens in this family have been revoked.' 
+      });
+    }
+
+    if (storedToken.expiresAt < new Date()) {
+      await user.revokeTokenFamily(decoded.family);
+      return res.status(401).json({ success: false, message: 'Refresh token expired' });
+    }
+
+    user.refreshTokens = user.refreshTokens.filter(t => t.tokenHash !== tokenHash);
+    await user.save();
+
+    await issueAuthCookies(res, user, req, decoded.family);
 
     return res.json({
       success: true,
@@ -391,6 +472,7 @@ router.post('/refresh', async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Refresh error:', error);
     return res.status(401).json({ success: false, message: 'Invalid or expired refresh token' });
   }
 });
@@ -401,7 +483,11 @@ router.post('/logout', async (req, res) => {
   if (refreshToken) {
     try {
       const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-      await User.findByIdAndUpdate(decoded.sub, { refreshTokenHash: null });
+      const user = await User.findById(decoded.sub);
+      
+      if (user && decoded.family) {
+        await user.revokeTokenFamily(decoded.family);
+      }
     } catch (error) {
       // Ignore invalid refresh token and still clear cookies.
     }
@@ -409,6 +495,23 @@ router.post('/logout', async (req, res) => {
 
   clearAuthCookies(res);
   return res.json({ success: true, message: 'Logged out successfully' });
+});
+
+router.post('/logout-all', ensureAuth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (user) {
+      user.refreshTokens = [];
+      user.tokenVersion += 1;
+      await user.save();
+    }
+
+    clearAuthCookies(res);
+    return res.json({ success: true, message: 'Logged out from all devices successfully' });
+  } catch (error) {
+    console.error('Logout all error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to logout from all devices' });
+  }
 });
 
 module.exports = router;
