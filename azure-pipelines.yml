@@ -50,14 +50,24 @@ stages:
             displayName: 'Debug: Print API URL'
           
           - task: Docker@2
-            displayName: 'Build and Push Frontend Image'
+            displayName: 'Build Frontend Image'
             inputs:
               containerRegistry: 'ACR-ServiceConnection'
               repository: '$(frontendImage)'
-              command: 'buildAndPush'
+              command: 'build'
               Dockerfile: 'frontend/Dockerfile'
               buildContext: 'frontend'
               arguments: '--no-cache --build-arg VITE_API_URL=$(backendApiUrl)'
+              tags: |
+                latest
+                $(Build.BuildId)
+          
+          - task: Docker@2
+            displayName: 'Push Frontend Image'
+            inputs:
+              containerRegistry: 'ACR-ServiceConnection'
+              repository: '$(frontendImage)'
+              command: 'push'
               tags: |
                 latest
                 $(Build.BuildId)
