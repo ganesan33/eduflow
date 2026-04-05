@@ -60,10 +60,38 @@ stages:
     condition: succeeded()
     jobs:
       - job: DeployApps
-        displayName: 'Restart App Services'
+        displayName: 'Deploy App Services'
         steps:
           - task: AzureCLI@2
-            displayName: 'Restart Backend App Service'
+            displayName: 'Update Backend Container'
+            inputs:
+              azureSubscription: 'Azure-ServiceConnection'
+              scriptType: 'ps'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                Write-Host "Updating backend container to build $(Build.BuildId)..."
+                az webapp config container set `
+                  --name $(backendAppName) `
+                  --resource-group $(resourceGroup) `
+                  --docker-custom-image-name $(registryUrl)/$(backendImage):$(Build.BuildId)
+                Write-Host "Backend container updated successfully"
+          
+          - task: AzureCLI@2
+            displayName: 'Update Frontend Container'
+            inputs:
+              azureSubscription: 'Azure-ServiceConnection'
+              scriptType: 'ps'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                Write-Host "Updating frontend container to build $(Build.BuildId)..."
+                az webapp config container set `
+                  --name $(frontendAppName) `
+                  --resource-group $(resourceGroup) `
+                  --docker-custom-image-name $(registryUrl)/$(frontendImage):$(Build.BuildId)
+                Write-Host "Frontend container updated successfully"
+          
+          - task: AzureCLI@2
+            displayName: 'Restart App Services'
             inputs:
               azureSubscription: 'Azure-ServiceConnection'
               scriptType: 'ps'
@@ -71,18 +99,11 @@ stages:
               inlineScript: |
                 Write-Host "Restarting backend app service..."
                 az webapp restart --name $(backendAppName) --resource-group $(resourceGroup)
-                Write-Host "Backend restarted successfully"
-          
-          - task: AzureCLI@2
-            displayName: 'Restart Frontend App Service'
-            inputs:
-              azureSubscription: 'Azure-ServiceConnection'
-              scriptType: 'ps'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
+                Write-Host "Backend restarted"
+                
                 Write-Host "Restarting frontend app service..."
                 az webapp restart --name $(frontendAppName) --resource-group $(resourceGroup)
-                Write-Host "Frontend restarted successfully"
+                Write-Host "Frontend restarted"
           
           - task: AzureCLI@2
             displayName: 'Verify Deployment'
