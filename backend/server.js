@@ -14,6 +14,7 @@ const authRoutes = require('./routes/auth');
 const courseRoutes = require('./routes/courses');
 const adminRoutes = require('./routes/admin');
 const instructorRequestRoutes = require('./routes/instructorRequests');
+const videoRoutes = require('./routes/video');
 
 const app = express();
 
@@ -55,7 +56,7 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: process.env.FRONTEND_URL || 'https://eduflow-frontend.azurewebsites.net',
   credentials: true
 }));
 
@@ -78,6 +79,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/instructor-requests', instructorRequestRoutes);
+app.use('/api/video', videoRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

@@ -52,7 +52,7 @@ function generateOneTimeToken() {
 }
 
 function getAppBaseUrl() {
-  return process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
+  return process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'https://eduflow-frontend.azurewebsites.net';
 }
 
 async function trySendEmail(emailPayload) {
