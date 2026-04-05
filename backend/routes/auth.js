@@ -73,7 +73,7 @@ function buildCookieOptions(isRefreshToken = false) {
   const baseOptions = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     path: isRefreshToken ? '/api/auth/refresh' : '/'
   };
   
