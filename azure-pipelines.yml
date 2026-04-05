@@ -66,7 +66,7 @@ stages:
             displayName: 'Restart Backend App Service'
             inputs:
               azureSubscription: 'Azure-ServiceConnection'
-              scriptType: 'pscore'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
                 Write-Host "Restarting backend app service..."
@@ -77,7 +77,7 @@ stages:
             displayName: 'Restart Frontend App Service'
             inputs:
               azureSubscription: 'Azure-ServiceConnection'
-              scriptType: 'pscore'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
                 Write-Host "Restarting frontend app service..."
@@ -88,7 +88,7 @@ stages:
             displayName: 'Verify Deployment'
             inputs:
               azureSubscription: 'Azure-ServiceConnection'
-              scriptType: 'pscore'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
                 Write-Host "Waiting for apps to restart..."
