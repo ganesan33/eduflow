@@ -66,34 +66,44 @@ stages:
             displayName: 'Restart Backend App Service'
             inputs:
               azureSubscription: 'Azure-ServiceConnection'
-              scriptType: 'bash'
+              scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "Restarting backend app service..."
+                Write-Host "Restarting backend app service..."
                 az webapp restart --name $(backendAppName) --resource-group $(resourceGroup)
-                echo "Backend restarted successfully"
+                Write-Host "Backend restarted successfully"
           
           - task: AzureCLI@2
             displayName: 'Restart Frontend App Service'
             inputs:
               azureSubscription: 'Azure-ServiceConnection'
-              scriptType: 'bash'
+              scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "Restarting frontend app service..."
+                Write-Host "Restarting frontend app service..."
                 az webapp restart --name $(frontendAppName) --resource-group $(resourceGroup)
-                echo "Frontend restarted successfully"
+                Write-Host "Frontend restarted successfully"
           
           - task: AzureCLI@2
             displayName: 'Verify Deployment'
             inputs:
               azureSubscription: 'Azure-ServiceConnection'
-              scriptType: 'bash'
+              scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "Waiting for apps to restart..."
-                sleep 30
-                echo "Testing backend health..."
-                curl -f $(backendApiUrl)/api/health || exit 1
-                echo "Backend is healthy!"
-                echo "Deployment completed successfully"
+                Write-Host "Waiting for apps to restart..."
+                Start-Sleep -Seconds 30
+                Write-Host "Testing backend health..."
+                try {
+                  $response = Invoke-WebRequest -Uri "$(backendApiUrl)/api/health" -UseBasicParsing
+                  if ($response.StatusCode -eq 200) {
+                    Write-Host "Backend is healthy!"
+                    Write-Host "Deployment completed successfully"
+                  } else {
+                    Write-Host "Backend health check failed with status: $($response.StatusCode)"
+                    exit 1
+                  }
+                } catch {
+                  Write-Host "Backend health check failed: $_"
+                  exit 1
+                }
