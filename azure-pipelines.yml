@@ -55,7 +55,8 @@ stages:
               command: 'buildAndPush'
               Dockerfile: 'frontend/Dockerfile'
               buildContext: 'frontend'
-              arguments: '--build-arg VITE_API_URL=$(backendApiUrl) --no-cache'
+              arguments: '--build-arg VITE_API_URL=$(backendApiUrl) --pull --no-cache'
+              addPipelineData: false
               tags: |
                 latest
                 $(Build.BuildId)
