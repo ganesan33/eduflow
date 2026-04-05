@@ -9,6 +9,7 @@ const cookieParser = require('cookie-parser');
 
 const connectDB = require('./config/db');
 const { startTokenCleanup } = require('./middleware/tokenCleanup');
+const { setupBlobStorageForStreaming } = require('./utils/setupBlobStorage');
 
 const authRoutes = require('./routes/auth');
 const courseRoutes = require('./routes/courses');
@@ -75,6 +76,33 @@ app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'EduFlow backend is running' });
 });
 
+// Test email endpoint (remove in production or add auth)
+app.post('/api/test-email', async (req, res) => {
+  try {
+    const { sendEmail } = require('./utils/mailer');
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email address required' });
+    }
+
+    await sendEmail({
+      to: email,
+      subject: 'EduFlow Test Email',
+      text: 'This is a test email from EduFlow. If you received this, SMTP is working correctly!',
+      html: '<p>This is a test email from EduFlow.</p><p>If you received this, SMTP is working correctly!</p>'
+    });
+
+    res.json({ success: true, message: 'Test email sent successfully' });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to send test email',
+      error: error.message 
+    });
+  }
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/admin', adminRoutes);
@@ -82,7 +110,10 @@ app.use('/api/instructor-requests', instructorRequestRoutes);
 app.use('/api/video', videoRoutes);
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Backend running on port ${PORT}`);
   startTokenCleanup(60);
+  
+  // Setup Azure Blob Storage for video streaming
+  await setupBlobStorageForStreaming();
 });
