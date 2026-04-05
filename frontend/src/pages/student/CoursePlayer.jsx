@@ -97,10 +97,14 @@ export default function StudentCoursePlayer({ user, onLogout }) {
                   key={activeVideoId}
                   controls
                   controlsList="nodownload"
+                  preload="metadata"
+                  playsInline
                   src={activeVideo.videoUrl}
                   data-watched={isVideoWatched(activeVideoId) ? 'true' : 'false'}
                   onTimeUpdate={(e) => markVideoWatched(activeVideoId, e)}
-                />
+                >
+                  Your browser does not support the video tag.
+                </video>
               </div>
               <div className="video-info">
                 <div className="video-title-row">
