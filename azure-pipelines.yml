@@ -41,6 +41,12 @@ stages:
       - job: BuildFrontend
         displayName: 'Build Frontend Image'
         steps:
+          - script: |
+              echo "=========================================="
+              echo "DEBUG: Backend API URL is: $(backendApiUrl)"
+              echo "=========================================="
+            displayName: 'Debug: Print API URL'
+          
           - task: Docker@2
             displayName: 'Build and Push Frontend Image'
             inputs:
@@ -53,6 +59,13 @@ stages:
               tags: |
                 latest
                 $(Build.BuildId)
+          
+          - script: |
+              echo "Verifying VITE_API_URL in built files..."
+              docker run --rm $(registryUrl)/$(frontendImage):$(Build.BuildId) sh -c "grep -r 'localhost:3000' /usr/share/nginx/html/assets/*.js || echo 'No localhost:3000 found - GOOD!'"
+              docker run --rm $(registryUrl)/$(frontendImage):$(Build.BuildId) sh -c "grep -r 'eduflow-backend.azurewebsites.net' /usr/share/nginx/html/assets/*.js || echo 'Backend URL not found - BAD!'"
+            displayName: 'Verify API URL in Built Files'
+            continueOnError: true
 
   - stage: Deploy
     displayName: 'Deploy to Azure App Service'
