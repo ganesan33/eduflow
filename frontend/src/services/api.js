@@ -1,8 +1,11 @@
+// Use environment variable for API URL, fallback to localhost for development
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+
 let refreshInFlight = null;
 
 async function refreshSession() {
   if (!refreshInFlight) {
-    refreshInFlight = fetch('/api/auth/refresh', {
+    refreshInFlight = fetch(`${API_BASE_URL}/api/auth/refresh`, {
       method: 'POST',
       credentials: 'include'
     }).finally(() => {
@@ -14,7 +17,10 @@ async function refreshSession() {
 }
 
 async function request(url, options = {}, retryOn401 = true) {
-  const response = await fetch(url, {
+  // Prepend API_BASE_URL if url doesn't start with http
+  const fullUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url}`;
+  
+  const response = await fetch(fullUrl, {
     credentials: 'include',
     ...options
   });

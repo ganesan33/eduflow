@@ -2,6 +2,12 @@ const mongoose = require('mongoose');
 
 const connectDB = async () => {
   try {
+    const mongoUri = process.env.MONGODB_URI;
+    
+    if (!mongoUri) {
+      throw new Error('MONGODB_URI is not defined in environment variables');
+    }
+
     // Cosmos DB specific options
     const options = {
       retryWrites: false,  // Cosmos DB doesn't support retryable writes
@@ -10,10 +16,10 @@ const connectDB = async () => {
       socketTimeoutMS: 45000,
     };
 
-    await mongoose.connect(process.env.MONGO_URI, options);
-    console.log('Azure Cosmos DB connected');
+    await mongoose.connect(mongoUri, options);
+    console.log('Database connected successfully');
   } catch (error) {
-    console.error('Cosmos DB connection failed:', error.message);
+    console.error('Database connection failed:', error.message);
     process.exit(1);
   }
 };

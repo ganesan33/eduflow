@@ -1,0 +1,99 @@
+# Azure DevOps CI/CD Pipeline for EduFlow
+# Triggers on push to main branch
+
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  registryName: 'eduflowregistry'
+  registryUrl: 'eduflowregistry.azurecr.io'
+  backendImage: 'eduflow-backend'
+  frontendImage: 'eduflow-frontend'
+  resourceGroup: 'eduflow-rg'
+  backendAppName: 'eduflow-backend'
+  frontendAppName: 'eduflow-frontend'
+  backendApiUrl: 'https://eduflow-backend.azurewebsites.net'
+
+stages:
+  - stage: Build
+    displayName: 'Build Docker Images'
+    jobs:
+      - job: BuildBackend
+        displayName: 'Build Backend Image'
+        steps:
+          - task: Docker@2
+            displayName: 'Build and Push Backend Image'
+            inputs:
+              containerRegistry: 'ACR-ServiceConnection'
+              repository: '$(backendImage)'
+              command: 'buildAndPush'
+              Dockerfile: 'backend/Dockerfile'
+              buildContext: 'backend'
+              tags: |
+                latest
+                $(Build.BuildId)
+      
+      - job: BuildFrontend
+        displayName: 'Build Frontend Image'
+        steps:
+          - task: Docker@2
+            displayName: 'Build and Push Frontend Image'
+            inputs:
+              containerRegistry: 'ACR-ServiceConnection'
+              repository: '$(frontendImage)'
+              command: 'buildAndPush'
+              Dockerfile: 'frontend/Dockerfile'
+              buildContext: 'frontend'
+              arguments: '--build-arg VITE_API_URL=$(backendApiUrl)'
+              tags: |
+                latest
+                $(Build.BuildId)
+
+  - stage: Deploy
+    displayName: 'Deploy to Azure App Service'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: DeployApps
+        displayName: 'Restart App Services'
+        steps:
+          - task: AzureCLI@2
+            displayName: 'Restart Backend App Service'
+            inputs:
+              azureSubscription: 'Azure-ServiceConnection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "Restarting backend app service..."
+                az webapp restart --name $(backendAppName) --resource-group $(resourceGroup)
+                echo "Backend restarted successfully"
+          
+          - task: AzureCLI@2
+            displayName: 'Restart Frontend App Service'
+            inputs:
+              azureSubscription: 'Azure-ServiceConnection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "Restarting frontend app service..."
+                az webapp restart --name $(frontendAppName) --resource-group $(resourceGroup)
+                echo "Frontend restarted successfully"
+          
+          - task: AzureCLI@2
+            displayName: 'Verify Deployment'
+            inputs:
+              azureSubscription: 'Azure-ServiceConnection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "Waiting for apps to restart..."
+                sleep 30
+                echo "Testing backend health..."
+                curl -f $(backendApiUrl)/api/health || exit 1
+                echo "Backend is healthy!"
+                echo "Deployment completed successfully"
