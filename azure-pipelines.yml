@@ -7,7 +7,7 @@ trigger:
       - main
 
 pool:
-  vmImage: 'ubuntu-latest'
+  name: 'Eduflowagent'
 
 variables:
   registryName: 'eduflowregistry'
@@ -65,7 +65,7 @@ stages:
           - task: AzureCLI@2
             displayName: 'Restart Backend App Service'
             inputs:
-              azureSubscription: 'Azure-ServiceConnection'
+              azureSubscription: 'Azure-'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
@@ -97,3 +97,4 @@ stages:
                 curl -f $(backendApiUrl)/api/health || exit 1
                 echo "Backend is healthy!"
                 echo "Deployment completed successfully"
+ServiceConnection
